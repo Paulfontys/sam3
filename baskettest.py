@@ -18,7 +18,7 @@ import numpy as np
 from pathlib import Path
 import time
 import pandas as pd
-
+import gc
 import sam3
 from sam3.model_builder import build_sam3_video_predictor
 from sam3.visualization_utils import (
@@ -28,32 +28,55 @@ from sam3.visualization_utils import (
 
 from huggingface_hub import login
 
+import dotenv
+
+dotenv.load_dotenv('/workspace/sam3/.env')
+import os
+
+hf_token = os.getenv('TOKENHF')
+
 # --- basic setup ---
 torch.set_default_dtype(torch.float32)
 torch.set_float32_matmul_precision("high")
-
+login(token=hf_token)
 
 sam3_root = os.path.join(os.path.dirname(sam3.__file__), "..")
+sam3_root = '/workspace/temp/sam3'
 gpus_to_use = range(torch.cuda.device_count())
 print(f"Using GPUs: {list(gpus_to_use)}")
 predictor = build_sam3_video_predictor()
 
-video_path = r"C:\Users\Milou\Documents\Project\S7\Sam3test\assets\videos\video_6frames.mp4"
+video_path = r"/workspace/sam3/assets/videos/heroes_1080p_0_60_15fps.mp4"
+# video_path = r"/workspace/sam3/assets/videos/frames/"
 # video_path = r'C:\Users\Milou\Documents\Project\S7\Sam3test\assets\videos\heroes_1080p_10s_15fps_100sec.mp4'
 
 # --- read video frames ---
 video_frames_for_vis = []
 if video_path.endswith(".mp4"):
     cap = cv2.VideoCapture(video_path)
+    loop_count = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        video_frames_for_vis.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        
+        if loop_count > 0 and loop_count < 1e6:
+            video_frames_for_vis.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            cv2.imwrite(f"/workspace/sam3/assets/videos/frames/{len(video_frames_for_vis)-1}.jpg", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        loop_count += 1
     cap.release()
 else:
+    # min 6 seconden aan de voorkant
+    # video_frames_for_vis = video_frames_for_vis[90:241]
     video_frames_for_vis = glob.glob(os.path.join(video_path, "*.jpg"))
     video_frames_for_vis.sort(key=lambda p: int(os.path.splitext(os.path.basename(p))[0]))
+
+# video_path = r"/workspace/sam3/assets/videos/frames/"
+
+
+# Source - https://stackoverflow.com/a
+# Posted by zeantsoi, modified by community. See post 'Timeline' for change history
+# Retrieved 2026-01-14, License - CC BY-SA 3.0
 
 plt.rcParams["axes.titlesize"] = 12
 plt.rcParams["figure.titlesize"] = 12
@@ -89,6 +112,8 @@ for response in predictor.handle_stream_request(
     frame_out = response.get("outputs")
     if frame_idx is not None and frame_out is not None:
         outputs_per_frame[frame_idx] = frame_out
+    gc.collect()
+    torch.cuda.empty_cache() 
 
 # --- prepare all outputs at once ---
 outputs_per_frame = prepare_masks_for_visualization(outputs_per_frame)
@@ -108,7 +133,7 @@ for fi in range(len(video_frames_for_vis)):
         video_frames_for_vis,
         outputs_list=[outputs_per_frame],
         titles=[f"SAM 3 Dense Tracking - Frame {fi}"],
-        figsize=(6, 4),
+        figsize=(16, 9),
         csv_data=csv_data
     )
     

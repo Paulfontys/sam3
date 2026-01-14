@@ -212,9 +212,10 @@ def visualize_formatted_frame_output(
     figsize=(12, 8),
     title_suffix="",
     prompt_info=None,
+    csv_data=None,
 ):
     """Visualize up to three sets of segmentation masks on a video frame.
-
+ 
     Args:
         frame_idx: Frame index to visualize
         image_files: List of image file paths
@@ -239,32 +240,32 @@ def visualize_formatted_frame_output(
         # This is a single frame's outputs {obj_id: mask}
         single_frame_outputs = {frame_idx: outputs_list}
         outputs_list = [single_frame_outputs]
-
+ 
     num_outputs = len(outputs_list)
     if titles is None:
         titles = [f"Set {i+1}" for i in range(num_outputs)]
     assert (
         len(titles) == num_outputs
     ), "length of `titles` should match that of `outputs_list` if not None."
-
+ 
     _, axes = plt.subplots(1, num_outputs, figsize=figsize)
     if num_outputs == 1:
         axes = [axes]  # Make it iterable
-
+ 
     img = load_frame(video_frames[frame_idx])
     img_H, img_W, _ = img.shape
-
+ 
     for idx in range(num_outputs):
         ax, outputs_set, ax_title = axes[idx], outputs_list[idx], titles[idx]
-        ax.set_title(f"Frame {frame_idx} - {ax_title}{title_suffix}")
+        # ax.set_title(f"Frame {frame_idx} - {ax_title}{title_suffix}")
         ax.imshow(img)
-
+ 
         if frame_idx in outputs_set:
             _outputs = outputs_set[frame_idx]
         else:
             print(f"Warning: Frame {frame_idx} not found in outputs_set")
             continue
-
+ 
         if prompt_info and frame_idx == 0:  # Show prompts on first frame
             if "boxes" in prompt_info:
                 for box in prompt_info["boxes"]:
@@ -281,13 +282,13 @@ def visualize_formatted_frame_output(
                         text="PROMPT BOX",
                         ax=ax,
                     )
-
+ 
             if "points" in prompt_info and "point_labels" in prompt_info:
                 points = np.array(prompt_info["points"])
                 labels = np.array(prompt_info["point_labels"])
                 # Convert normalized to pixel coordinates
                 points_pixel = points * np.array([img_W, img_H])
-
+ 
                 # Draw positive points (green stars)
                 pos_points = points_pixel[labels == 1]
                 if len(pos_points) > 0:
@@ -302,7 +303,7 @@ def visualize_formatted_frame_output(
                         label="Positive Points",
                         zorder=10,
                     )
-
+ 
                 # Draw negative points (red stars)
                 neg_points = points_pixel[labels == 0]
                 if len(neg_points) > 0:
@@ -317,7 +318,7 @@ def visualize_formatted_frame_output(
                         label="Negative Points",
                         zorder=10,
                     )
-
+ 
         objects_drawn = 0
         for obj_id, binary_mask in _outputs.items():
             mask_sum = (
@@ -325,12 +326,12 @@ def visualize_formatted_frame_output(
                 if hasattr(binary_mask, "sum")
                 else np.sum(binary_mask)
             )
-
+ 
             if mask_sum > 0:  # Only draw if mask has content
                 # Convert to torch tensor if it's not already
                 if not isinstance(binary_mask, torch.Tensor):
                     binary_mask = torch.tensor(binary_mask)
-
+ 
                 # Find bounding box from mask
                 if binary_mask.any():
                     box_xyxy = masks_to_boxes(binary_mask.unsqueeze(0)).squeeze()
@@ -338,9 +339,29 @@ def visualize_formatted_frame_output(
                 else:
                     # Fallback: create a small box at center
                     box_xyxy = [0.45, 0.45, 0.55, 0.55]
-
+ 
+                xmin_pixel = int(box_xyxy[0] * img_W)
+                ymin_pixel = int(box_xyxy[1] * img_H)
+                xmax_pixel = int(box_xyxy[2] * img_W)
+                ymax_pixel = int(box_xyxy[3] * img_H)
+                xmean_pixel = (xmin_pixel + xmax_pixel) // 2
+                ymean_pixel = (ymin_pixel + ymax_pixel) // 2
+ 
+                if csv_data is not None:
+                    csv_data.append({
+                        "frame_idx": frame_idx,
+                        "obj_id": obj_id,
+                        "team": "unknown",  # You can update this if you have team info
+                        "xmin": xmin_pixel,
+                        "ymin": ymin_pixel,
+                        "xmax": xmax_pixel,
+                        "ymax": ymax_pixel,
+                        "xmean": xmean_pixel,
+                        "ymean": ymean_pixel
+                    })
+ 
                 color = COLORS[obj_id % len(COLORS)]
-
+ 
                 plot_bbox(
                     img_H,
                     img_W,
@@ -350,7 +371,7 @@ def visualize_formatted_frame_output(
                     color=color,
                     ax=ax,
                 )
-
+ 
                 # Convert back to numpy for plotting
                 mask_np = (
                     binary_mask.numpy()
@@ -359,7 +380,7 @@ def visualize_formatted_frame_output(
                 )
                 plot_mask(mask_np, color=color, ax=ax)
                 objects_drawn += 1
-
+ 
         if objects_drawn == 0:
             ax.text(
                 0.5,
@@ -372,17 +393,23 @@ def visualize_formatted_frame_output(
                 color="red",
                 weight="bold",
             )
-
+ 
         # Draw additional points if provided
         if points_list is not None and points_list[idx] is not None:
             show_points(
                 points_list[idx], points_labels_list[idx], ax=ax, marker_size=200
             )
-
+ 
         ax.axis("off")
 
     plt.tight_layout()
-    plt.show()
+    save_path = f'/workspace/sam3/output/output_image_{frame_idx}.png'
+    # plt.savefig(str(save_path), bbox_inches="tight", dpi=100)
+    plt.savefig(save_path,
+                    bbox_inches='tight',
+                    pad_inches=0,
+                    transparent=True)
+    print(f"Saved to {save_path}")
 
 
 def render_masklet_frame(img, outputs, frame_idx=None, alpha=0.5):
